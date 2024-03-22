@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
-from transformers import AutoTokenizer, pipeline
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from nltk.metrics import edit_distance
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -31,7 +31,7 @@ def kl_divergence(a, b):
     return scipy.stats.entropy(a_probs, b_probs)
 
 
-def euclidean_distance(a, b):
+def euclidean_distance(a,b):
     vector1 = Counter(a)
     vector2 = Counter(b)
 
@@ -44,13 +44,12 @@ def euclidean_distance(a, b):
 
 
 tokenizer = AutoTokenizer.from_pretrained("")
-llm_generator = pipeline('text-generation', model='nomic-ai/gpt4all-falcon', tokenizer = tokenizer, trust_remote_code=True)
+llm_generator = pipeline('text-generation', model='', tokenizer = tokenizer, trust_remote_code=True)
+
 metadata_df = pd.read_csv('metadata.csv')
-
-
-def generate_prompt(text):
-    return f"Generate an essay in the same style:\n\n{text}"
-
+def generate_prompt(text, length_factor, operation):
+    target_length = int(len(text.split()) * length_factor) if operation == 'longer' else int(len(text.split()) / length_factor)
+    return f"Generate an essay that is {length_factor * 100 if operation == 'longer' else 100 / length_factor}% the length of this in the same style:\n\n{text}"
 
 # Initialize empty lists to store results
 results = []
@@ -61,32 +60,41 @@ for _, row in metadata_df.iterrows():
     original_text = row['original-text']
     original_length = row['length']
 
-    prompt = generate_prompt(original_text)
+    for length_factor in [0.25, 0.5, 0.75, 1.0]:
+        for operation in ['longer', 'shorter']:
+            prompt = generate_prompt(original_text, length_factor, operation)
 
-    # Generate text using GPT-3
-    generated_text = llm_generator(prompt, max_length=original_length)[0]['generated_text']
 
-    # Calculate evaluation metrics
-    levenshtein_sim = levenshtein_similarity(original_text, generated_text)
-    jaccard_sim = jaccard_similarity(original_text, generated_text)
-    vectorizer = TfidfVectorizer()
-    original_vectors = vectorizer.fit_transform([original_text])
-    generated_vectors = vectorizer.transform([generated_text])
-    cosine_sim = cosine_similarity(original_vectors, generated_vectors)[0][0]
-    kl_div = kl_divergence(original_text.split(), generated_text.split())
+            # Generate text using GPT-3
+            generated_text = llm_generator(prompt, max_length=int(original_length * length_factor) if operation == 'longer' else int(original_length // length_factor))[0]['generated_text']
+            print(generated_text)
 
-    # Store results
-    results.append({
-        'file_name': file_name,
-        'original_length': original_length,
-        'model': 'gpt3',
-        'generated_text': generated_text,
-        'generated_length': len(generated_text.split()),
-        'levenshtein_similarity': levenshtein_sim,
-        'jaccard_similarity': jaccard_sim,
-        'cosine_similarity': cosine_sim,
-        'kl_divergence': kl_div
-    })
+
+            # Calculate evaluation metrics
+            levenshtein_sim = levenshtein_similarity(original_text, generated_text)
+            jaccard_sim = jaccard_similarity(original_text, generated_text)
+            vectorizer = TfidfVectorizer()
+            original_vectors = vectorizer.fit_transform([original_text])
+            generated_vectors = vectorizer.transform([generated_text])
+            cosine_sim = cosine_similarity(original_vectors, generated_vectors)[0][0]
+            kl_div = kl_divergence(original_text.split(), generated_text.split())
+            euclidean_dist = euclidean_distance(original_text.split(), generated_text.split())
+
+            # Store results
+            results.append({
+                'file_name': file_name,
+                'original_length': original_length,
+                'length_factor': length_factor,
+                'operation': operation,
+                'model': 'gpt3',
+                'generated_text': generated_text,
+                'generated_length': len(generated_text.split()),
+                'levenshtein_similarity': levenshtein_sim,
+                'jaccard_similarity': jaccard_sim,
+                'cosine_similarity': cosine_sim,
+                'kl_divergence': kl_div,
+                'euclidean_distance': euclidean_dist
+            })
 
 # Create a DataFrame from the results
 results_df = pd.DataFrame(results)
